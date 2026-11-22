@@ -156,7 +156,7 @@ footer a{color:var(--accent);font-weight:600}
     var maxW = W - 2 * m, maxH = H - 2 * m;
     var rows = [], placed = {}, dropped = 0;
     photos.forEach(function(p){
-      var sz = sizeOf(p), w = mm(sz[0]), ph0 = mm(sz[1]), h = ph0 + (p.cap ? mm(8) : 0);
+      var sz = sizeOf(p), w = mm(sz[0]), ph0 = mm(sz[1]), h = ph0;
       placed[p.id] = 0;
       for (var c = 0; c < p.copies; c++){
         var it = {p:p, w:w, h:h, ph:ph0}, cur = rows[rows.length - 1];
@@ -194,11 +194,11 @@ footer a{color:var(--accent);font-weight:600}
         var y = oy + r.top;
         drawTile(ctx, it.p, x, y, it.w, it.ph);
         if (it.p.cap){
-          var fs = mm(4), cw = it.w - mm(2), nm = it.p.name;
+          var fs = mm(3.5), cw = it.w - mm(2), nm = it.p.name, sh = mm(6);
           ctx.font = "600 " + fs + "px Figtree, system-ui, sans-serif";
           while (ctx.measureText(nm).width > cw && fs > mm(1.5)){ fs -= 2; ctx.font = "600 " + fs + "px Figtree, system-ui, sans-serif"; }
-          ctx.fillStyle = "#111"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
-          ctx.fillText(nm, x + mm(1), y + it.ph + (it.h - it.ph) / 2);
+          ctx.fillStyle = "rgba(255,255,255,.88)"; ctx.fillRect(x, y + it.ph - sh, it.w, sh); ctx.fillStyle = "#111"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+          ctx.fillText(nm, x + mm(1), y + it.ph - sh / 2);
         }
         if ($("guides").checked){ ctx.strokeStyle = "#9aa5a1"; ctx.lineWidth = 2; ctx.strokeRect(x - 1, y - 1, it.w + 2, it.h + 2); }
         x += it.w + gap;
@@ -226,7 +226,7 @@ footer a{color:var(--accent);font-weight:600}
       '<button class="small rm" data-act="rm">Remove</button></div>' +
       '<div class="two"><label>Size<select data-k="size">' + sizeOpts + '</select></label>' +
       '<label>Copies<input type="number" data-k="copies" min="0" max="60"></label></div>' +
-      '<label class="row"><input type="checkbox" data-k="cap"> Print name under photo</label>' +
+      '<label class="row"><input type="checkbox" data-k="cap"> Print name inside photo (bottom)</label>' +
       '<label>Zoom<input type="range" data-k="zoom" min="1" max="3" step="0.01"></label>' +
       '<div class="two"><label>Left / right<input type="range" data-k="px" min="-100" max="100"></label>' +
       '<label>Up / down<input type="range" data-k="py" min="-100" max="100"></label></div>';
