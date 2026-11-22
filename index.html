@@ -45,9 +45,10 @@ button:focus-visible,select:focus-visible,input:focus-visible,.drop:focus-visibl
 .card img{width:52px;height:64px;object-fit:cover;border-radius:4px;background:var(--line)}
 .empty{color:var(--muted);font-size:.9rem;text-align:center;padding:4px 0}
 .stage{background:var(--stage);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 3px rgba(15,23,42,.06);padding:20px;display:grid;justify-items:center;gap:10px}
-.stage canvas{max-width:100%;height:auto;background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.25)}
+.stage canvas{touch-action:none;cursor:grab;max-width:100%;height:auto;background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.25)}
 #info{color:var(--muted);font-size:.88rem;text-align:center;max-width:560px}
 #info.warn{color:var(--danger)}
+#hint{color:var(--muted);font-size:.88rem;text-align:center;max-width:560px}
 #printArea{display:none}
 footer{padding:0 24px 28px;color:var(--muted);text-align:center;font-size:.9rem}
 footer a{color:var(--accent);font-weight:600}
@@ -77,6 +78,7 @@ footer a{color:var(--accent);font-weight:600}
       <div id="cards"></div>
       <div class="empty" id="empty">No photos yet. Add one to start.</div>
       <button id="fill" class="small">Fill the sheet evenly</button>
+      <button id="reset" class="small" hidden>Reset photo positions and skips</button>
       <div class="two" id="customSize" hidden>
         <label>Custom width (mm) <input type="number" id="cw" value="35" min="10" max="200"></label>
         <label>Custom height (mm) <input type="number" id="ch" value="45" min="10" max="200"></label>
@@ -108,6 +110,7 @@ footer a{color:var(--accent);font-weight:600}
 
   <section class="stage" aria-label="Preview">
     <canvas id="sheet" aria-label="Sheet preview"></canvas>
+    <div id="hint">Drag a photo to move it. Double-click a photo to skip it (it stays blank when printed). Double-click again to bring it back. Blue outline = last photo you added or edited (preview only).</div>
     <div id="info"></div>
   </section>
 </main>
@@ -136,7 +139,7 @@ footer a{color:var(--accent);font-weight:600}
     ["Short (8.5 × 13 in)", 215.9, 330.2]
   ];
   var $ = function(id){ return document.getElementById(id); };
-  var photos = [], uid = 0;
+  var photos = [], uid = 0, hits = [], lastId = 0, drag = null;
   var paperSel = $("paper");
   PAPERS.forEach(function(p,i){ paperSel.add(new Option(p[0], i)); });
   paperSel.value = 0;
@@ -159,7 +162,7 @@ footer a{color:var(--accent);font-weight:600}
       var sz = sizeOf(p), w = mm(sz[0]), ph0 = mm(sz[1]), h = ph0;
       placed[p.id] = 0;
       for (var c = 0; c < p.copies; c++){
-        var it = {p:p, w:w, h:h, ph:ph0}, cur = rows[rows.length - 1];
+        var it = {p:p, w:w, h:h, ph:ph0, c:c}, cur = rows[rows.length - 1];
         if (w > maxW || h > maxH){ dropped++; continue; }
         if (cur && cur.w + gap + w <= maxW && cur.top + Math.max(cur.h, h) <= maxH){
           cur.items.push(it); cur.w += gap + w; cur.h = Math.max(cur.h, h); placed[p.id]++; continue;
@@ -183,15 +186,22 @@ footer a{color:var(--accent);font-weight:600}
     ctx.drawImage(im, x + dx, y + dy, dw, dh); ctx.restore();
   }
 
-  function render(){
+  function render(noOverlay){
+    var overlay = !noOverlay;
     var L = layout(), cv = $("sheet"), ctx = cv.getContext("2d");
     cv.width = L.W; cv.height = L.H;
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, L.W, L.H);
     var gap = mm(+$("gap").value || 0), left = $("align").value === "left", mg = mm(+$("margin").value || 0), oy = left ? mg : Math.round((L.H - L.totalH) / 2);
-    L.rows.forEach(function(r){
+    hits = []; L.rows.forEach(function(r){
       var x = left ? mg : Math.round((L.W - r.w) / 2);
       r.items.forEach(function(it){
-        var y = oy + r.top;
+        var ov = it.p.ov && it.p.ov[it.c], y = ov ? mm(ov.y) : oy + r.top, sx = x;
+        if (ov) x = mm(ov.x);
+        hits.push({p: it.p, c: it.c, x: x, y: y, w: it.w, h: it.h});
+        var nextX = sx + it.w + gap;
+        var off = it.p.skip && it.p.skip[it.c];
+        if (off && !overlay){ x = nextX; return; }
+        if (off) ctx.globalAlpha = .3;
         drawTile(ctx, it.p, x, y, it.w, it.ph);
         if (it.p.cap){
           var fs = mm(3.5), cw = it.w - mm(2), nm = it.p.name, sh = mm(6);
@@ -201,7 +211,17 @@ footer a{color:var(--accent);font-weight:600}
           ctx.fillText(nm, x + mm(1), y + it.ph - sh / 2);
         }
         if ($("guides").checked){ ctx.strokeStyle = "#9aa5a1"; ctx.lineWidth = 2; ctx.strokeRect(x - 1, y - 1, it.w + 2, it.h + 2); }
-        x += it.w + gap;
+        ctx.globalAlpha = 1;
+        if (off){
+          ctx.strokeStyle = "#dc2626"; ctx.lineWidth = 6; ctx.beginPath();
+          ctx.moveTo(x, y); ctx.lineTo(x + it.w, y + it.h); ctx.moveTo(x + it.w, y); ctx.lineTo(x, y + it.h); ctx.stroke();
+          var lb = "NOT PRINTED", lf = mm(2.6); ctx.font = "700 " + lf + "px sans-serif";
+          var lw = ctx.measureText(lb).width + mm(2);
+          ctx.fillStyle = "#dc2626"; ctx.fillRect(x + (it.w - lw) / 2, y + it.h / 2 - lf, lw, lf * 2);
+          ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(lb, x + it.w / 2, y + it.h / 2);
+        }
+        if (overlay && it.p.id === lastId){ ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 8; ctx.strokeRect(x - 4, y - 4, it.w + 8, it.h + 8); }
+        x = nextX;
       });
     });
     var paper = PAPERS[paperSel.value][0].split(" (")[0];
@@ -215,6 +235,7 @@ footer a{color:var(--accent);font-weight:600}
     }
     $("empty").hidden = photos.length > 0;
     $("fill").hidden = !photos.length;
+    $("reset").hidden = !photos.some(function(p){ for (var k in p.ov) return true; for (var j in p.skip) return true; return false; });
     $("customSize").hidden = !photos.some(function(p){ return SIZES[p.size][0] === "Custom"; });
   }
 
@@ -256,8 +277,8 @@ footer a{color:var(--accent);font-weight:600}
       var url = URL.createObjectURL(f), im = new Image();
       im.onload = function(){
         var p = {id: ++uid, name: f.name.replace(/\.[^.]+$/, "").slice(0, 30) || "Photo", img: im, url: url,
-                 size: photos.length ? photos[photos.length - 1].size : 0, copies: 4, cap: 1, zoom: 1, px: 0, py: 0};
-        photos.push(p); addCard(p); render();
+                 size: photos.length ? photos[photos.length - 1].size : 0, copies: 4, cap: 1, ov: {}, zoom: 1, px: 0, py: 0};
+        photos.push(p); lastId = p.id; addCard(p); render();
       };
       im.src = url;
     });
@@ -289,16 +310,57 @@ footer a{color:var(--accent);font-weight:600}
 
   function download(type, ext){
     var a = document.createElement("a");
-    a.href = $("sheet").toDataURL(type, .95); a.download = "id-photo-layout." + ext;
+    render(true); a.href = $("sheet").toDataURL(type, .95); render(); a.download = "id-photo-layout." + ext;
     document.body.appendChild(a); a.click(); a.remove();
   }
   $("dlJpg").addEventListener("click", function(){ download("image/jpeg", "jpg"); });
   $("dlPng").addEventListener("click", function(){ download("image/png", "png"); });
+  (function(){
+    var cv = $("sheet");
+    function pt(e){ var r = cv.getBoundingClientRect(); return {x: (e.clientX - r.left) * cv.width / r.width, y: (e.clientY - r.top) * cv.height / r.height}; }
+    function hit(q){ for (var i = hits.length - 1; i >= 0; i--){ var h = hits[i]; if (q.x >= h.x && q.x <= h.x + h.w && q.y >= h.y && q.y <= h.y + h.h) return h; } return null; }
+    cv.addEventListener("pointerdown", function(e){
+      var q = pt(e), h = hit(q); if (!h) return;
+      drag = {h: h, dx: q.x - h.x, dy: q.y - h.y}; lastId = h.p.id;
+      cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; e.preventDefault(); render();
+    });
+    cv.addEventListener("pointermove", function(e){
+      var q = pt(e);
+      if (!drag){ cv.style.cursor = hit(q) ? "grab" : "default"; return; }
+      var h = drag.h, nx = Math.max(0, Math.min(cv.width - h.w, q.x - drag.dx)), ny = Math.max(0, Math.min(cv.height - h.h, q.y - drag.dy));
+      if (Math.abs(q.x - drag.h.x - drag.dx) > 6 || Math.abs(q.y - drag.h.y - drag.dy) > 6) drag.moved = true;
+      if (!drag.moved) return;
+      h.p.ov[h.c] = {x: nx / DPI * 25.4, y: ny / DPI * 25.4};
+      render();
+    });
+    var last = null;
+    function end(){
+      var d = drag; drag = null; cv.style.cursor = "grab";
+      if (d && !d.moved){
+        var now = Date.now();
+        if (last && last.p === d.h.p && last.c === d.h.c && now - last.t < 400){
+          var s = d.h.p.skip || (d.h.p.skip = {});
+          if (s[d.h.c]) delete s[d.h.c]; else s[d.h.c] = 1;
+          last = null; render();
+        } else last = {p: d.h.p, c: d.h.c, t: now};
+      } else last = null;
+    }
+    cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
+  })();
+  $("cards").addEventListener("focusin", function(e){
+    var c = e.target.closest && e.target.closest(".card");
+    if (c && lastId !== +c.dataset.id){ lastId = +c.dataset.id; render(); }
+  });
+  $("reset").addEventListener("click", function(){ photos.forEach(function(p){ p.ov = {}; p.skip = {}; }); render(); });
+  ["paper","landscape"].forEach(function(id){
+    $(id).addEventListener("change", function(){ photos.forEach(function(p){ p.ov = {}; }); render(); });
+  });
+
   $("print").addEventListener("click", function(){
     var cv = $("sheet"), pg = PAPERS[paperSel.value], pw = pg[1], ph = pg[2];
     if ($("landscape").checked){ var t = pw; pw = ph; ph = t; }
     $("pageStyle").textContent = "@media print{@page{size:" + pw + "mm " + ph + "mm;margin:0}#printArea img{width:" + pw + "mm;height:" + ph + "mm}}";
-    $("printImg").src = cv.toDataURL("image/jpeg", .95);
+    render(true); $("printImg").src = cv.toDataURL("image/jpeg", .95); render();
     setTimeout(function(){ window.print(); }, 150);
   });
 
